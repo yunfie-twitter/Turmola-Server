@@ -12,7 +12,7 @@ from celery import current_task
 from ..core.celery_app import celery_app
 from ..core.config import settings
 from ..services.video_service import VideoService
-from ..utils.helpers import sanitize_filename
+from ..utils.helpers import get_safe_filename_with_fallback, generate_unique_filename
 
 logger = logging.getLogger(__name__)
 
@@ -164,19 +164,8 @@ def _download_youtube_video(task, job_id: str, url: str, options: Dict[str, Any]
         
         ydl.download([url])
         
-        # ファイル処理
-        downloaded_files = []
-        for file_path in os.listdir(output_dir):
-            full_path = os.path.join(output_dir, file_path)
-            if os.path.isfile(full_path):
-                safe_filename = sanitize_filename(file_path)
-                safe_path = os.path.join(settings.STORAGE_PATH, safe_filename)
-                os.rename(full_path, safe_path)
-                downloaded_files.append(safe_filename)
-        
-        # 一時ディレクトリ削除
-        import shutil
-        shutil.rmtree(output_dir, ignore_errors=True)
+        # ファイル処理（日本語ファイル名対応）
+        downloaded_files = _process_downloaded_files(output_dir, job_id, info)
         
         if not downloaded_files:
             raise Exception("ダウンロードファイルが見つかりませんでした")
@@ -204,23 +193,6 @@ def _download_other_site_video(task, job_id: str, url: str, options: Dict[str, A
     
     video_service = VideoService()
     ydl_opts = video_service.get_download_options(options, url)
-    
-    # ニコニコ動画用強化設定
-    ydl_opts.update({
-        'extract_flat': False,
-        'skip_download': False,
-        'writeinfojson': False,
-        'ignoreerrors': False,
-        'retries': 5,
-        'fragment_retries': 10,
-        'skip_unavailable_fragments': False,
-        # HLS暗号化対応
-        'hls_prefer_native': True,
-        'hls_use_mpegts': False,
-        # ニコニコ動画固有設定
-        'http_chunk_size': 10485760,
-        'extractor_retries': 5,
-    })
     
     # 出力ディレクトリ設定
     output_dir = os.path.join(settings.STORAGE_PATH, job_id)
@@ -274,20 +246,8 @@ def _download_other_site_video(task, job_id: str, url: str, options: Dict[str, A
                 # ダウンロード実行
                 ydl.download([url])
                 
-                # ファイル処理
-                downloaded_files = []
-                if os.path.exists(output_dir):
-                    for file_path in os.listdir(output_dir):
-                        full_path = os.path.join(output_dir, file_path)
-                        if os.path.isfile(full_path) and os.path.getsize(full_path) > 0:
-                            safe_filename = sanitize_filename(file_path)
-                            safe_path = os.path.join(settings.STORAGE_PATH, safe_filename)
-                            os.rename(full_path, safe_path)
-                            downloaded_files.append(safe_filename)
-                
-                # 一時ディレクトリ削除
-                import shutil
-                shutil.rmtree(output_dir, ignore_errors=True)
+                # ファイル処理（日本語ファイル名対応）
+                downloaded_files = _process_downloaded_files(output_dir, job_id, info)
                 
                 if not downloaded_files:
                     last_error = "ダウンロードファイルが見つかりませんでした"
@@ -320,3 +280,32 @@ def _download_other_site_video(task, job_id: str, url: str, options: Dict[str, A
     # すべての試行が失敗した場合
     logger.error(f"すべての試行が失敗: {job_id}, 最終エラー: {last_error}")
     raise Exception(f"ダウンロードに失敗しました: {last_error}")
+
+def _process_downloaded_files(output_dir: str, job_id: str, video_info: Dict[str, Any] = None):
+    """ダウンロードファイル処理（日本語ファイル名対応）"""
+    downloaded_files = []
+    
+    if not os.path.exists(output_dir):
+        return downloaded_files
+    
+    for file_path in os.listdir(output_dir):
+        full_path = os.path.join(output_dir, file_path)
+        if os.path.isfile(full_path) and os.path.getsize(full_path) > 0:
+            
+            # 日本語対応ファイル名生成
+            safe_filename = get_safe_filename_with_fallback(file_path, video_info)
+            
+            # 重複チェック
+            safe_filename = generate_unique_filename(safe_filename, settings.STORAGE_PATH)
+            
+            safe_path = os.path.join(settings.STORAGE_PATH, safe_filename)
+            os.rename(full_path, safe_path)
+            downloaded_files.append(safe_filename)
+            
+            logger.info(f"ファイル保存: {file_path} -> {safe_filename}")
+    
+    # 一時ディレクトリ削除
+    import shutil
+    shutil.rmtree(output_dir, ignore_errors=True)
+    
+    return downloaded_files

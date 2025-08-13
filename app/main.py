@@ -6,12 +6,16 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
+import asyncio
 
 from .core.config import settings
 from .utils.rate_limiter import limiter
 from .utils.logging import setup_logging
 from .middleware.security import SecurityMiddleware
 from .api import server_info, video_info, download, jobs, logs
+from .utils.logging_config import setup_logging
+from .api import health,monitoring
+from .services.failover_service import failover_service
 
 # ロギング設定
 setup_logging()
@@ -83,8 +87,12 @@ async def startup_event():
     """アプリケーション起動時の処理"""
     import logging
     logger = logging.getLogger(__name__)
+
+    # ログ初期化
+    setup_logging()
+
     logger.info("Turmola が起動しました")
-    
+
     # Redisへの接続確認
     from .core.redis_client import redis_client
     try:
@@ -92,6 +100,11 @@ async def startup_event():
         logger.info("Redis接続成功")
     except Exception as e:
         logger.error(f"Redis接続失敗: {e}")
+
+    # フェイルオーバーのハートビート開始
+    if settings.ENABLE_FAILOVER:
+        asyncio.create_task(failover_service.start_heartbeat())
+
 
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -109,7 +122,6 @@ async def root():
         "docs": "/docs"
     }
 
-@app.get("/health")
-async def health_check():
-    """ヘルスチェックエンドポイント"""
-    return {"status": "healthy"}
+# ヘルスチェックエンドポイント追加
+app.include_router(health.router, tags=["health"])
+app.include_router(monitoring.router, prefix="/api/monitoring", tags=["監視"])

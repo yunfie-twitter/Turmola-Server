@@ -1,178 +1,244 @@
+"""
+ユーティリティ関数（日本語ファイル名完全対応版）
+"""
+
 import re
+import unicodedata
 import hashlib
-from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
-from typing import Dict, Any
+from pathlib import Path
+from datetime import datetime
+from typing import Dict, Any, Optional
 
 def sanitize_filename(filename: str) -> str:
-    """ファイル名を安全な形式に変換"""
+    """
+    ファイル名をサニタイズ（日本語完全対応版）
+    """
+    if not filename:
+        return "untitled"
     
-    # 特殊文字を全角に変換
-    replacements = {
-        '/': '／',
-        '\\': '＼',
-        ':': '：',
-        '*': '＊',
-        '?': '？',
-        '"': '"',
-        '<': '＜',
-        '>': '＞',
-        '|': '｜'
+    # 拡張子を分離
+    path = Path(filename)
+    stem = path.stem
+    suffix = path.suffix
+    
+    # 危険な文字を除去（Windows/Linux/macOS共通）
+    dangerous_chars = r'[<>:"/\\|?*]'
+    stem = re.sub(dangerous_chars, '', stem)
+    
+    # 制御文字と不可視文字を除去
+    stem = ''.join(char for char in stem if unicodedata.category(char)[0] != 'C')
+    
+    # 先頭・末尾の空白とドットを除去
+    stem = stem.strip('. ')
+    
+    # 予約語チェック（Windows）
+    reserved_names = {
+        'CON', 'PRN', 'AUX', 'NUL',
+        'COM1', 'COM2', 'COM3', 'COM4', 'COM5', 'COM6', 'COM7', 'COM8', 'COM9',
+        'LPT1', 'LPT2', 'LPT3', 'LPT4', 'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9'
     }
     
-    safe_filename = filename
-    for char, replacement in replacements.items():
-        safe_filename = safe_filename.replace(char, replacement)
+    if stem.upper() in reserved_names:
+        stem = f"_{stem}"
     
-    # 連続するスペースを単一に
-    safe_filename = re.sub(r'\s+', ' ', safe_filename)
+    # 空の場合はデフォルト名
+    if not stem:
+        stem = "untitled"
     
-    # 先頭・末尾のスペース除去
-    safe_filename = safe_filename.strip()
+    # ファイル名を再構築
+    safe_filename = stem + suffix
     
-    # 長すぎる場合は切り詰め
-    if len(safe_filename) > 200:
-        name, ext = safe_filename.rsplit('.', 1) if '.' in safe_filename else (safe_filename, '')
-        max_name_length = 200 - len(ext) - 1
-        safe_filename = name[:max_name_length] + ('.' + ext if ext else '')
+    # 長さ制限（255バイト - UTF-8考慮）
+    safe_filename = limit_filename_bytes(safe_filename, 255)
     
     return safe_filename
 
-def sanitize_url(url: str) -> str:
-    """URLから追跡パラメータを除去"""
+def limit_filename_bytes(filename: str, max_bytes: int = 255) -> str:
+    """
+    ファイル名のバイト長を制限（UTF-8）
+    """
+    encoded = filename.encode('utf-8')
     
-    # 除去するパラメータリスト
-    tracking_params = {
-        'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content',
-        'fbclid', 'gclid', 'msclkid', '_ga', 'ref', 'source'
-    }
+    if len(encoded) <= max_bytes:
+        return filename
     
-    parsed = urlparse(url)
-    query_params = parse_qs(parsed.query)
+    # 拡張子を保持しながら調整
+    path = Path(filename)
+    stem = path.stem
+    suffix = path.suffix
     
-    # 追跡パラメータを除去
-    clean_params = {
-        key: value for key, value in query_params.items()
-        if key not in tracking_params
-    }
+    # 拡張子分のバイトを確保
+    suffix_bytes = len(suffix.encode('utf-8'))
+    available_bytes = max_bytes - suffix_bytes - 10  # 安全マージン
     
-    # URLを再構築
-    clean_query = urlencode(clean_params, doseq=True)
-    clean_url = urlunparse((
-        parsed.scheme,
-        parsed.netloc,
-        parsed.path,
-        parsed.params,
-        clean_query,
-        ''  # fragment除去
-    ))
+    # stemを切り詰める
+    truncated = ''
+    for char in stem:
+        test_name = truncated + char
+        if len(test_name.encode('utf-8')) <= available_bytes:
+            truncated += char
+        else:
+            break
     
-    return clean_url
+    return truncated + suffix
 
-def generate_cache_key(url: str, options: Dict[str, Any]) -> str:
-    """URLとオプションからキャッシュキーを生成"""
+def sanitize_filename_with_info(filename: str, video_info: Dict[str, Any] = None) -> str:
+    """
+    動画情報を使った賢いファイル名生成（日本語対応）
+    """
+    # 基本のサニタイズ
+    safe_name = sanitize_filename(filename)
     
-    # 重要なオプションのみ考慮
-    key_options = {
-        'quality': options.get('quality', 'best'),
-        'audio_only': options.get('audio_only', False),
-        'format_id': options.get('format_id'),
-        'subtitles': options.get('subtitles', False),
-        'subtitle_lang': options.get('subtitle_lang', 'ja')
-    }
+    # 日本語が除去されすぎた場合の対策
+    if (len(safe_name) < 5 or 
+        safe_name.replace('_', '').replace('.', '').replace('-', '') == '' or
+        safe_name.startswith('_') and len(safe_name.replace('_', '')) < 3):
+        
+        if video_info and video_info.get('title'):
+            # 動画タイトルからファイル名生成
+            title = video_info['title']
+            
+            # 日本語対応のクリーンアップ
+            clean_title = re.sub(r'[<>:"/\\|?*]', '', title)
+            clean_title = clean_title.strip('. ')[:50]  # 50文字制限
+            
+            # 拡張子取得
+            path = Path(filename)
+            suffix = path.suffix or '.mp4'
+            
+            return sanitize_filename(clean_title + suffix)
     
-    # ハッシュ生成
-    key_string = f"{url}:{str(sorted(key_options.items()))}"
-    hash_object = hashlib.md5(key_string.encode())
-    
-    return f"download:{hash_object.hexdigest()}"
+    return safe_name
 
-def format_filesize(bytes_size: int) -> str:
-    """ファイルサイズを人間が読みやすい形式に変換"""
-    
-    for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
-        if bytes_size < 1024.0:
-            return f"{bytes_size:.1f} {unit}"
-        bytes_size /= 1024.0
-    
-    return f"{bytes_size:.1f} PB"
-
-def format_duration(seconds: int) -> str:
-    """秒数を時:分:秒形式に変換"""
-    
-    hours = seconds // 3600
-    minutes = (seconds % 3600) // 60
-    seconds = seconds % 60
-    
-    if hours > 0:
-        return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-    else:
-        return f"{minutes:02d}:{seconds:02d}"
-
-def validate_url(url: str) -> bool:
-    """URLの妥当性を確認"""
-    
+def get_safe_filename_with_fallback(original_filename: str, video_info: Dict[str, Any] = None) -> str:
+    """
+    日本語ファイル名対応（フォールバック機能付き）
+    """
     try:
-        parsed = urlparse(url)
-        return bool(parsed.scheme and parsed.netloc)
-    except:
-        return False
+        # まず動画情報を使った生成を試行
+        if video_info:
+            safe_name = sanitize_filename_with_info(original_filename, video_info)
+        else:
+            safe_name = sanitize_filename(original_filename)
+        
+        # 結果が極端に短くなった場合のフォールバック
+        if (len(safe_name) < 5 or 
+            safe_name.replace('_', '').replace('.', '').replace('-', '') == ''):
+            
+            # フォールバック1: タイトルベース
+            if video_info and video_info.get('title'):
+                title_based = create_filename_from_title(video_info['title'], original_filename)
+                if title_based:
+                    return title_based
+            
+            # フォールバック2: タイムスタンプ付きファイル名
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            path = Path(original_filename)
+            return f"video_{timestamp}{path.suffix or '.mp4'}"
+        
+        return safe_name
+        
+    except Exception as e:
+        # エラー時の最終フォールバック
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        return f"video_{timestamp}.mp4"
 
-def extract_domain(url: str) -> str:
-    """URLからドメインを抽出"""
+def create_filename_from_title(title: str, original_filename: str = "") -> Optional[str]:
+    """
+    動画タイトルから安全なファイル名を作成
+    """
+    if not title:
+        return None
     
-    try:
-        parsed = urlparse(url)
-        return parsed.netloc.lower()
-    except:
-        return ""
+    # タイトルをクリーンアップ
+    clean_title = re.sub(r'[<>:"/\\|?*]', '', title)
+    clean_title = clean_title.strip('. ')
+    
+    # 長すぎる場合は切り詰め
+    if len(clean_title.encode('utf-8')) > 100:  # 100バイト制限
+        clean_title = limit_filename_bytes(clean_title, 100)
+    
+    # 拡張子取得
+    path = Path(original_filename)
+    suffix = path.suffix or '.mp4'
+    
+    return sanitize_filename(clean_title + suffix)
 
-def is_supported_site(url: str) -> bool:
-    """対応サイトかどうか確認"""
+def generate_unique_filename(base_filename: str, storage_path: str) -> str:
+    """
+    重複しないユニークなファイル名を生成
+    """
+    path = Path(base_filename)
+    stem = path.stem
+    suffix = path.suffix
     
-    supported_domains = {
-        'youtube.com', 'youtu.be', 'www.youtube.com',
-        'nicovideo.jp', 'www.nicovideo.jp',
-        'vimeo.com', 'www.vimeo.com',
-        'dailymotion.com', 'www.dailymotion.com',
-        'twitch.tv', 'www.twitch.tv'
-    }
+    counter = 1
+    unique_filename = base_filename
     
-    domain = extract_domain(url)
-    return domain in supported_domains
+    while Path(storage_path, unique_filename).exists():
+        unique_filename = f"{stem}_{counter}{suffix}"
+        counter += 1
+        
+        # 無限ループ防止
+        if counter > 1000:
+            # ハッシュベースのユニーク名
+            hash_suffix = hashlib.md5(f"{stem}_{datetime.now().isoformat()}".encode()).hexdigest()[:8]
+            unique_filename = f"{stem}_{hash_suffix}{suffix}"
+            break
+    
+    return unique_filename
 
-def get_client_ip(request) -> str:
-    """クライアントIPアドレスを取得"""
+def format_file_size(size_bytes: int) -> str:
+    """
+    ファイルサイズを人間が読みやすい形式に変換
+    """
+    if size_bytes == 0:
+        return "0 B"
     
-    # プロキシ経由の場合のヘッダーを確認
-    forwarded_for = request.headers.get('X-Forwarded-For')
-    if forwarded_for:
-        # 最初のIPアドレスを取得
-        return forwarded_for.split(',')[0].strip()
+    size_names = ["B", "KB", "MB", "GB", "TB"]
+    size_bytes = float(size_bytes)
+    i = 0
     
-    real_ip = request.headers.get('X-Real-IP')
-    if real_ip:
-        return real_ip
+    while size_bytes >= 1024.0 and i < len(size_names) - 1:
+        size_bytes /= 1024.0
+        i += 1
     
-    # デフォルト
-    return request.client.host if request.client else "unknown"
+    return f"{size_bytes:.1f} {size_names[i]}"
 
-def generate_cache_key(url: str, options: Dict[str, Any]) -> str:
-    """URLとオプションからキャッシュキーを生成（JSON安全版）"""
+def is_valid_url(url: str) -> bool:
+    """
+    URLの妥当性をチェック
+    """
+    import re
+    url_pattern = re.compile(
+        r'^https?://'  # http:// または https://
+        r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+[A-Z]{2,6}\.?|'  # ドメイン
+        r'localhost|'  # localhost
+        r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'  # IP
+        r'(?::\d+)?'  # ポート番号
+        r'(?:/?|[/?]\S+)$', re.IGNORECASE)
     
-    # 重要なオプションのみ考慮（すべて基本型）
-    key_options = {
-        'quality': options.get('quality', 'best'),
-        'audio_only': options.get('audio_only', False),
-        'format_id': options.get('format_id'),
-        'subtitles': options.get('subtitles', False),
-        'subtitle_lang': options.get('subtitle_lang', 'ja')
-    }
+    return url_pattern.match(url) is not None
+
+def extract_video_id(url: str) -> Optional[str]:
+    """
+    URLから動画IDを抽出
+    """
+    # YouTube
+    youtube_patterns = [
+        r'(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/embed/)([a-zA-Z0-9_-]{11})',
+        r'youtube\.com/.*[?&]v=([a-zA-Z0-9_-]{11})'
+    ]
     
-    # Noneを除去
-    key_options = {k: v for k, v in key_options.items() if v is not None}
+    for pattern in youtube_patterns:
+        match = re.search(pattern, url)
+        if match:
+            return match.group(1)
     
-    # ハッシュ生成
-    key_string = f"{url}:{str(sorted(key_options.items()))}"
-    hash_object = hashlib.md5(key_string.encode())
+    # ニコニコ動画
+    niconico_pattern = r'nicovideo\.jp/watch/(sm\d+|so\d+|nm\d+)'
+    match = re.search(niconico_pattern, url)
+    if match:
+        return match.group(1)
     
-    return f"download:{hash_object.hexdigest()}"
+    return None

@@ -33,6 +33,12 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health/readiness"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
     restart: unless-stopped
     # Windows非対応なのでuser指定解除（Windowsではエラーになる）
 
@@ -86,8 +92,29 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  postgres:
+    image: postgres:15-alpine
+    container_name: Turmola_postgres
+    environment:
+      - POSTGRES_DB=turmola_db
+      - POSTGRES_USER=turmola_user
+      - POSTGRES_PASSWORD=turmola_pass
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U turmola_user -d turmola_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
 volumes:
   redis_data:
+    driver: local
+  postgres_data:
     driver: local
 
 networks:

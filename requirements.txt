@@ -15,3 +15,8 @@ psutil==5.9.6
 requests==2.31.0
 supervisor==4.2.5
 pycryptodomex>=3.18.0
+psutil
+sqlalchemy>=2.0.23
+psycopg2-binary>=2.9.9
+alembic>=1.13.0
+asyncpg>=0.29.0

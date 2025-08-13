@@ -51,7 +51,7 @@ class VideoService:
             
             # 出力設定
             'outtmpl': '%(title)s.%(ext)s',
-            'restrictfilenames': True,
+            'restrictfilenames': False,  # 日本語ファイル名を許可
             
             # 品質設定
             'merge_output_format': 'mp4',
@@ -88,7 +88,7 @@ class VideoService:
             
             # 出力設定
             'outtmpl': '%(title)s.%(ext)s',
-            'restrictfilenames': True,
+            'restrictfilenames': False,  # 日本語ファイル名を許可
             
             # 品質設定（より寛容に）
             'merge_output_format': 'mp4',
@@ -103,12 +103,16 @@ class VideoService:
             # エラー処理（より寛容に）
             'ignoreerrors': True,  # 一部エラーを無視
             'retries': 5,  # リトライ回数を増加
-            'fragment_retries': 5,
+            'fragment_retries': 10,  # フラグメントリトライ増加
             'skip_unavailable_fragments': True,  # 利用できないフラグメントをスキップ
+            
+            # HLS暗号化対応
+            'hls_prefer_native': True,
+            'hls_use_mpegts': False,
             
             # ニコニコ動画等の固有設定
             'http_chunk_size': 10485760,  # 10MB
-            'extractor_retries': 3,
+            'extractor_retries': 5,
         }
         
         return ydl_opts
