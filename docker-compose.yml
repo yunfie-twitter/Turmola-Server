@@ -4,7 +4,7 @@ services:
   # Redis サービス
   redis:
     image: redis:7-alpine
-    container_name: video_downloader_redis
+    container_name: Turmola_redis
     command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
     volumes:
       - redis_data:/data
@@ -20,7 +20,7 @@ services:
   # FastAPI アプリケーション
   api:
     build: .
-    container_name: video_downloader_api
+    container_name: Turmola_api
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
     ports:
       - "8000:8000"
@@ -44,7 +44,7 @@ services:
   # Celery ワーカー（Linux/macOS対応版）
   worker:
     build: .
-    container_name: video_downloader_worker
+    container_name: Turmola_worker
     command: celery -A app.core.celery_app worker --loglevel=info --concurrency=4 --max-tasks-per-child=1000 --uid=1000 --gid=1000
     environment:
       - REDIS_URL=redis://redis:6379/0
@@ -62,7 +62,7 @@ services:
   # Celery Beat
   beat:
     build: .
-    container_name: video_downloader_beat
+    container_name: Turmola_beat
     command: celery -A app.core.celery_app beat --loglevel=info --scheduler=celery.beat:PersistentScheduler
     environment:
       - REDIS_URL=redis://redis:6379/0
@@ -80,7 +80,7 @@ services:
   # Flower
   flower:
     build: .
-    container_name: video_downloader_flower
+    container_name: Turmola_flower
     command: celery -A app.core.celery_app flower --port=5555 --broker=redis://redis:6379/0
     ports:
       - "5555:5555"
@@ -99,4 +99,4 @@ volumes:
 
 networks:
   default:
-    name: video_downloader_network
+    name: Turmola_network
