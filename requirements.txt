@@ -1,0 +1,16 @@
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+celery[redis]==5.4.0
+redis==5.0.1
+flower==2.0.1
+yt-dlp
+pydantic==2.5.2
+pydantic-settings==2.1.0
+slowapi==0.1.9
+python-multipart==0.0.6
+aiofiles==23.2.1
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+psutil==5.9.6
+requests==2.31.0
+supervisor==4.2.5
