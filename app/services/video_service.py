@@ -1,114 +1,164 @@
-import yt_dlp
-import asyncio
-import logging
-from typing import Optional, Dict, Any, List
-from ..models.server import VideoInfo
-from ..utils.helpers import sanitize_filename
+"""
+動画サービス（YouTube判別対応版）
+"""
 
-logger = logging.getLogger(__name__)
+import os
+import re
+from typing import Dict, Any
+from urllib.parse import urlparse
 
 class VideoService:
-    """動画情報取得・処理サービス"""
+    """動画ダウンロード設定サービス"""
     
-    def __init__(self):
-        self.ydl_opts = {
-            'quiet': True,
-            'no_warnings': True,
-            'extractaudio': False,
-            'format': 'best',
-            'ignoreerrors': True,
-        }
-    
-    async def get_video_info(self, url: str) -> Optional[VideoInfo]:
-        """動画情報を取得"""
-        try:
-            loop = asyncio.get_event_loop()
-            info = await loop.run_in_executor(
-                None, self._extract_info, url
-            )
-            
-            if not info:
-                return None
-            
-            # フォーマット情報の整理
-            formats = []
-            if 'formats' in info:
-                for fmt in info['formats']:
-                    if fmt.get('vcodec') != 'none':  # 動画フォーマットのみ
-                        formats.append({
-                            'format_id': fmt.get('format_id'),
-                            'ext': fmt.get('ext'),
-                            'resolution': fmt.get('resolution') or f"{fmt.get('width', 'unknown')}x{fmt.get('height', 'unknown')}",
-                            'fps': fmt.get('fps'),
-                            'vcodec': fmt.get('vcodec'),
-                            'acodec': fmt.get('acodec'),
-                            'filesize': fmt.get('filesize')
-                        })
-            
-            return VideoInfo(
-                title=info.get('title', 'Unknown'),
-                duration=info.get('duration'),
-                uploader=info.get('uploader'),
-                view_count=info.get('view_count'),
-                upload_date=info.get('upload_date'),
-                description=info.get('description', '')[:500] if info.get('description') else None,
-                thumbnail=info.get('thumbnail'),
-                formats=formats
-            )
-            
-        except Exception as e:
-            logger.error(f"動画情報取得エラー: {e}")
-            return None
-    
-    def _extract_info(self, url: str) -> Optional[Dict[str, Any]]:
-        """yt-dlpで動画情報抽出"""
-        try:
-            with yt_dlp.YoutubeDL(self.ydl_opts) as ydl:
-                return ydl.extract_info(url, download=False)
-        except Exception as e:
-            logger.error(f"yt-dlp情報抽出エラー: {e}")
-            return None
-    
-    async def get_available_formats(self, url: str) -> List[Dict[str, Any]]:
-        """利用可能なフォーマット一覧を取得"""
-        try:
-            info = await self.get_video_info(url)
-            if info:
-                return info.formats
-            return []
-        except Exception as e:
-            logger.error(f"フォーマット取得エラー: {e}")
-            return []
-    
-    def get_download_options(self, options: Dict[str, Any]) -> Dict[str, Any]:
-        """ダウンロードオプションを生成"""
-        ydl_opts = self.ydl_opts.copy()
+    @staticmethod
+    def is_youtube_url(url: str) -> bool:
+        """YouTubeのURLかどうか判定"""
+        youtube_patterns = [
+            r'(?:youtube\.com|youtu\.be)',
+            r'(?:www\.youtube\.com)',
+            r'(?:m\.youtube\.com)',
+            r'(?:music\.youtube\.com)',
+        ]
         
-        # 品質設定
-        if options.get('audio_only'):
-            ydl_opts['format'] = 'bestaudio/best'
-            ydl_opts['extractaudio'] = True
-            ydl_opts['audioformat'] = 'mp3'
+        for pattern in youtube_patterns:
+            if re.search(pattern, url, re.IGNORECASE):
+                return True
+        return False
+    
+    def get_download_options(self, options: Dict[str, Any], url: str = "") -> Dict[str, Any]:
+        """yt-dlpダウンロードオプション生成（YouTube判別対応版）"""
+        
+        is_youtube = self.is_youtube_url(url)
+        
+        if is_youtube:
+            return self._get_youtube_options(options)
         else:
-            quality = options.get('quality', 'best')
-            if quality == 'best':
-                ydl_opts['format'] = 'best'
-            elif quality == 'worst':
-                ydl_opts['format'] = 'worst'
-            else:
-                # 特定品質指定（720p等）
-                ydl_opts['format'] = f'best[height<={quality.replace("p", "")}]'
+            return self._get_other_site_options(options)
+    
+    def _get_youtube_options(self, options: Dict[str, Any]) -> Dict[str, Any]:
+        """YouTube用ダウンロードオプション（従来版）"""
         
-        # フォーマットID指定
-        if options.get('format_id'):
-            ydl_opts['format'] = options['format_id']
-        
-        # 字幕設定
-        if options.get('subtitles'):
-            ydl_opts['writesubtitles'] = True
-            ydl_opts['subtitleslangs'] = [options.get('subtitle_lang', 'ja')]
-        
-        # ファイル名テンプレート
-        ydl_opts['outtmpl'] = '%(title)s.%(ext)s'
+        ydl_opts = {
+            # 基本設定
+            'format': self._get_youtube_format_selector(options),
+            'noplaylist': True,
+            'no_warnings': False,
+            'quiet': False,
+            
+            # 動画を確実にダウンロードする設定
+            'skip_download': False,
+            'extract_flat': False,
+            
+            # 出力設定
+            'outtmpl': '%(title)s.%(ext)s',
+            'restrictfilenames': True,
+            
+            # 品質設定
+            'merge_output_format': 'mp4',
+            'writeinfojson': False,
+            
+            # 字幕設定（条件付き）
+            'writesubtitles': options.get('subtitles', False),
+            'writeautomaticsub': options.get('subtitles', False),
+            'subtitleslangs': [options.get('subtitle_lang', 'ja')] if options.get('subtitles') else [],
+            'embed_subs': False,
+            
+            # エラー処理
+            'ignoreerrors': False,
+            'retries': 3,
+            'fragment_retries': 3,
+            'skip_unavailable_fragments': False,
+        }
         
         return ydl_opts
+    
+    def _get_other_site_options(self, options: Dict[str, Any]) -> Dict[str, Any]:
+        """YouTube以外のサイト用ダウンロードオプション（例外処理強化版）"""
+        
+        ydl_opts = {
+            # 基本設定（より柔軟に）
+            'format': self._get_flexible_format_selector(options),
+            'noplaylist': True,
+            'no_warnings': False,
+            'quiet': False,
+            
+            # 動画を確実にダウンロードする設定
+            'skip_download': False,
+            'extract_flat': False,
+            
+            # 出力設定
+            'outtmpl': '%(title)s.%(ext)s',
+            'restrictfilenames': True,
+            
+            # 品質設定（より寛容に）
+            'merge_output_format': 'mp4',
+            'writeinfojson': False,
+            
+            # 字幕設定（YouTube以外では控えめに）
+            'writesubtitles': options.get('subtitles', False),
+            'writeautomaticsub': False,  # 自動字幕は無効
+            'subtitleslangs': [options.get('subtitle_lang', 'ja')] if options.get('subtitles') else [],
+            'embed_subs': False,
+            
+            # エラー処理（より寛容に）
+            'ignoreerrors': True,  # 一部エラーを無視
+            'retries': 5,  # リトライ回数を増加
+            'fragment_retries': 5,
+            'skip_unavailable_fragments': True,  # 利用できないフラグメントをスキップ
+            
+            # ニコニコ動画等の固有設定
+            'http_chunk_size': 10485760,  # 10MB
+            'extractor_retries': 3,
+        }
+        
+        return ydl_opts
+    
+    def _get_youtube_format_selector(self, options: Dict[str, Any]) -> str:
+        """YouTubeフォーマット選択（従来版）"""
+        
+        quality = options.get('quality', 'best')
+        audio_only = options.get('audio_only', False)
+        format_id = options.get('format_id')
+        
+        if format_id:
+            return format_id
+        
+        if audio_only:
+            return 'bestaudio/best'
+        
+        # YouTube用の詳細なフォーマット指定
+        if quality == 'best':
+            return 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'
+        elif quality == 'worst':
+            return 'worstvideo[ext=mp4]+worstaudio[ext=m4a]/worst[ext=mp4]/worst'
+        elif quality.endswith('p'):
+            height = quality[:-1]
+            return f'bestvideo[height<={height}][ext=mp4]+bestaudio[ext=m4a]/best[height<={height}][ext=mp4]/best'
+        else:
+            return 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'
+    
+    def _get_flexible_format_selector(self, options: Dict[str, Any]) -> str:
+        """柔軟なフォーマット選択（YouTube以外用）"""
+        
+        quality = options.get('quality', 'best')
+        audio_only = options.get('audio_only', False)
+        format_id = options.get('format_id')
+        
+        if format_id:
+            return format_id
+        
+        if audio_only:
+            # 音声のみ（より柔軟に）
+            return 'bestaudio/worst'
+        
+        # 他サイト用の柔軟なフォーマット選択
+        if quality == 'best':
+            return 'best'  # シンプルに最高画質
+        elif quality == 'worst':
+            return 'worst'  # シンプルに最低画質
+        elif quality.endswith('p'):
+            # 品質指定があっても、利用できない場合はbestにフォールバック
+            height = quality[:-1]
+            return f'best[height<={height}]/best'
+        else:
+            return 'best'  # デフォルトは最高画質

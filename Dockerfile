@@ -1,7 +1,13 @@
 FROM python:3.11-slim
 
-# システムパッケージ更新
-RUN apt-get update && apt-get install -y \
+# 環境変数（UTF-8化）
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8
+
+# システムパッケージ更新 & 必要ツールインストール
+RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ffmpeg \
     && rm -rf /var/lib/apt/lists/*
@@ -9,18 +15,24 @@ RUN apt-get update && apt-get install -y \
 # 作業ディレクトリ設定
 WORKDIR /app
 
-# Python依存関係インストール
+# Python依存関係インストール（pycryptodomex追加）
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt \
+    && pip install --no-cache-dir pycryptodomex
 
-# アプリケーションコピー
+# アプリケーション一式コピー
 COPY . .
 
-# ディレクトリ作成
-RUN mkdir -p /app/downloads /app/logs /app/celerybeat
+# ログ/ダウンロード/beatディレクトリ作成 & 権限設定
+RUN mkdir -p /app/downloads /app/logs /app/celerybeat \
+    && groupadd -r appuser && useradd -r -g appuser appuser \
+    && chown -R appuser:appuser /app
 
-# 権限設定
-RUN chmod +x startup.sh || true
+# 実行権限付与
+RUN chmod +x /app/startup.sh || true
+
+# 非rootユーザーに切り替え（権限を確実に反映）
+USER appuser
 
 # ポート公開
 EXPOSE 8000

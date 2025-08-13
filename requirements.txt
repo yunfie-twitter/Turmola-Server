@@ -14,3 +14,4 @@ passlib[bcrypt]==1.7.4
 psutil==5.9.6
 requests==2.31.0
 supervisor==4.2.5
+pycryptodomex>=3.18.0
