@@ -5,11 +5,10 @@ services:
   redis:
     image: redis:7-alpine
     container_name: Turmola_redis
-    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
-    volumes:
-      - redis_data:/data
     ports:
       - "6379:6379"
+    volumes:
+      - redis_data:/data
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -35,17 +34,13 @@ services:
       redis:
         condition: service_healthy
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+    # Windows非対応なのでuser指定解除（Windowsではエラーになる）
 
-  # Celery ワーカー（Linux/macOS対応版）
+  # Celery ワーカー（UID/GID設定はLinux/macOS専用）
   worker:
     build: .
     container_name: Turmola_worker
-    command: celery -A app.core.celery_app worker --loglevel=info --concurrency=4 --max-tasks-per-child=1000 --uid=1000 --gid=1000
+    command: celery -A app.core.celery_app worker --loglevel=info --concurrency=4 --max-tasks-per-child=1000
     environment:
       - REDIS_URL=redis://redis:6379/0
       - CELERY_BROKER_URL=redis://redis:6379/0
@@ -57,7 +52,6 @@ services:
       redis:
         condition: service_healthy
     restart: unless-stopped
-    user: "1000:1000"
 
   # Celery Beat
   beat:
@@ -75,7 +69,6 @@ services:
       redis:
         condition: service_healthy
     restart: unless-stopped
-    user: "1000:1000"
 
   # Flower
   flower:
