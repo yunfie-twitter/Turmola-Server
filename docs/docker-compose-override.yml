@@ -1,21 +1,25 @@
 version: '3.8'
 
 services:
-  # Celery ワーカー（Windows用オーバーライド）
+  # === Celery ワーカー（Windows専用設定） ===
+  # Windows版Dockerでは "user" 指定や一部のフォーク動作に制限があるため、
+  # Linux版と異なり user: null に設定して無効化する。
+  # また、Windows環境ではフォーク数やタスク数の制御を明示的に指定する。
   worker:
     command: celery -A app.core.celery_app worker --loglevel=info --concurrency=4 --max-tasks-per-child=1000
     environment:
-      - REDIS_URL=redis://redis:6379/0
-      - CELERY_BROKER_URL=redis://redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://redis:6379/1
-      - C_FORCE_ROOT=1
-    user: null  # userディレクティブを無効化
+      - REDIS_URL=redis://redis:6379/0                # Redis接続URL（タスクキュー用）
+      - CELERY_BROKER_URL=redis://redis:6379/0        # CeleryブローカーURL
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1    # タスク結果保存先（Redis DB 1）
+      - C_FORCE_ROOT=1                                # root権限での実行を許可（Windows対応）
+    user: null  # Linux用user指定を無効化（Windows制限回避）
 
-  # Celery Beat（Windows用オーバーライド）
+  # === Celery Beat（Windows専用設定） ===
+  # スケジューラーも同様に Windows では user を無効化し、環境変数でRedis接続を設定する。
   beat:
     environment:
       - REDIS_URL=redis://redis:6379/0
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/1
       - C_FORCE_ROOT=1
-    user: null  # userディレクティブを無効化
+    user: null  # Linux用user指定を無効化（Windows制限回避）
