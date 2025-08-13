@@ -1,7 +1,3 @@
-"""
-動画情報取得 API
-"""
-
 from fastapi import APIRouter, HTTPException, Query, Request
 import logging
 from typing import Optional

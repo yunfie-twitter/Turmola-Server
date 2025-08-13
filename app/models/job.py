@@ -1,7 +1,3 @@
-"""
-ジョブ関連のデータモデル
-"""
-
 from pydantic import BaseModel, Field, HttpUrl
 from typing import Optional, Dict, Any, List
 from enum import Enum

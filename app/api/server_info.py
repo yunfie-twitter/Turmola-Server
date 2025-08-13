@@ -1,7 +1,3 @@
-"""
-サーバー情報 API
-"""
-
 from fastapi import APIRouter, Request
 import logging
 import platform

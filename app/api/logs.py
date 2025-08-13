@@ -1,7 +1,3 @@
-"""
-ログ管理 API
-"""
-
 from fastapi import APIRouter, HTTPException, Query, Request
 import logging
 import os

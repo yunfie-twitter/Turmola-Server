@@ -1,7 +1,3 @@
-"""
-Redis クライアント設定
-"""
-
 import redis.asyncio as redis
 import logging
 from typing import Optional

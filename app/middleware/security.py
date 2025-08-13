@@ -1,7 +1,3 @@
-"""
-セキュリティミドルウェア[10]
-"""
-
 import time
 import logging
 from fastapi import Request, Response

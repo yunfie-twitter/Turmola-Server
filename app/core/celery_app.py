@@ -1,7 +1,3 @@
-"""
-Celery アプリケーション設定（Celery 5.4以降対応）
-"""
-
 from celery import Celery
 from kombu import Queue
 import os

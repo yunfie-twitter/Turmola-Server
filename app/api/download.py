@@ -1,7 +1,3 @@
-"""
-ダウンロード API（完全版）
-"""
-
 from fastapi import APIRouter, HTTPException, Request
 import uuid
 import logging

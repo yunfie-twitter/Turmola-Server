@@ -1,7 +1,3 @@
-"""
-ジョブ管理 API
-"""
-
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 import logging
 from typing import Optional

@@ -1,7 +1,3 @@
-"""
-アプリケーション設定（Pydantic V2完全対応版）
-"""
-
 import os
 import warnings
 from pydantic_settings import BaseSettings
