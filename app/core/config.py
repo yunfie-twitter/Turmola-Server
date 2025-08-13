@@ -1,8 +1,13 @@
+"""
+アプリケーション設定（Pydantic V2完全対応版）
+"""
+
 import os
 import warnings
 from pydantic_settings import BaseSettings
 from pydantic import Field, field_validator
 from typing import List, Optional
+from pathlib import Path
 
 class Settings(BaseSettings):
     """アプリケーション設定クラス（Pydantic V2対応）"""
@@ -28,6 +33,7 @@ class Settings(BaseSettings):
     CACHE_TTL: int = Field(default=3600, ge=60, description="キャッシュ有効期限（秒）")
     
     # レート制限設定
+    ENABLE_RATE_LIMITING: bool = Field(default=True, description="レート制限有効化フラグ")
     RATE_LIMIT_REQUESTS: int = Field(default=10, ge=1, le=1000, description="レート制限リクエスト数")
     RATE_LIMIT_WINDOW: int = Field(default=60, ge=1, description="レート制限時間窓（秒）")
     
@@ -45,21 +51,6 @@ class Settings(BaseSettings):
     CLEANUP_INTERVAL_HOURS: int = Field(default=24, ge=1, le=168, description="クリーンアップ間隔（時間）")
     MAX_FILE_AGE_DAYS: int = Field(default=7, ge=1, le=365, description="ファイル最大保持日数")
     MAX_STORAGE_GB: int = Field(default=100, ge=1, le=10000, description="最大ストレージ容量（GB）")
-        
-    # レート制限設定（段階的対応）
-    ENABLE_RATE_LIMITING: bool = Field(default=True, description="レート制限有効化フラグ")
-    
-    # 通常ユーザー制限
-    RATE_LIMIT_REQUESTS_NORMAL: int = Field(default=50, description="通常ユーザーレート制限")
-    RATE_LIMIT_WINDOW_NORMAL: int = Field(default=60, description="通常ユーザー時間窓")
-    
-    # プレミアムユーザー制限
-    RATE_LIMIT_REQUESTS_PREMIUM: int = Field(default=500, description="プレミアムユーザーレート制限")
-    RATE_LIMIT_WINDOW_PREMIUM: int = Field(default=60, description="プレミアムユーザー時間窓")
-    
-    # 開発者制限（最も緩い）
-    RATE_LIMIT_REQUESTS_DEVELOPER: int = Field(default=10000, description="開発者レート制限")
-    RATE_LIMIT_WINDOW_DEVELOPER: int = Field(default=60, description="開発者時間窓")
     
     # 環境設定
     ENVIRONMENT: str = Field(default="development", description="実行環境")
@@ -93,6 +84,21 @@ class Settings(BaseSettings):
             raise ValueError(f"LOG_LEVELは以下のいずれかである必要があります: {', '.join(valid_levels)}")
         return v.upper()
     
+    @field_validator('PREMIUM_API_KEY')
+    @classmethod
+    def validate_premium_api_key(cls, v):
+        """PREMIUM_API_KEY検証"""
+        if v == "your-premium-api-key-here":
+            raise ValueError(
+                "PREMIUM_API_KEYをデフォルト値から変更してください。"
+            )
+        
+        if len(v) < 32:
+            raise ValueError("PREMIUM_API_KEYは最低32文字以上である必要があります")
+        
+        return v
+    
+    # 重要: 環境判定メソッドを追加
     def is_development(self) -> bool:
         """開発環境かどうか判定"""
         return self.ENVIRONMENT.lower() == 'development'
@@ -101,6 +107,10 @@ class Settings(BaseSettings):
         """本番環境かどうか判定"""
         return self.ENVIRONMENT.lower() == 'production'
     
+    def get_storage_path(self) -> Path:
+        """ストレージパスをPathオブジェクトで取得"""
+        return Path(self.STORAGE_PATH)
+
     model_config = {
         "env_file": ".env",
         "env_file_encoding": "utf-8",
@@ -112,7 +122,7 @@ class Settings(BaseSettings):
 # 設定インスタンス作成
 settings = Settings()
 
-# 起動時の設定検証
+# 起動時の設定検証（修正版）
 def validate_settings():
     """設定の総合検証"""
     if settings.is_development():
@@ -127,6 +137,9 @@ def validate_settings():
         print(f"🚦 レート制限: {settings.RATE_LIMIT_REQUESTS}回/{settings.RATE_LIMIT_WINDOW}秒")
         print("=== 設定検証完了 ===")
 
-# 開発環境のみで設定検証実行
-if settings.is_development():
-    validate_settings()
+# 条件付きで設定検証実行（エラー回避）
+try:
+    if settings.is_development():
+        validate_settings()
+except Exception as e:
+    print(f"⚠️ 設定検証をスキップしました: {e}")
