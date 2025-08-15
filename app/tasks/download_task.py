@@ -1,10 +1,11 @@
 """
-動画ダウンロードタスク（完全修正版）
+動画ダウンロードタスク（同期処理対応版）
 """
 
 import os
 import yt_dlp
 import logging
+import asyncio
 from datetime import datetime
 from typing import Dict, Any
 from celery import current_task
@@ -12,6 +13,7 @@ from celery import current_task
 from ..core.celery_app import celery_app
 from ..core.config import settings
 from ..services.video_service import VideoService
+from ..services.download_accelerator import download_accelerator
 from ..utils.helpers import get_safe_filename_with_fallback, generate_unique_filename
 
 logger = logging.getLogger(__name__)
@@ -30,7 +32,7 @@ logger = logging.getLogger(__name__)
     priority=5,
 )
 def download_video(self, job_id: str, url: str, options: Dict[str, Any]):
-    """動画ダウンロードタスク（完全修正版）"""
+    """動画ダウンロードタスク（同期処理対応版）"""
     
     def update_job_status(job_id: str, status: str, data: Dict[str, Any]):
         """ジョブ状態更新"""
@@ -67,10 +69,25 @@ def download_video(self, job_id: str, url: str, options: Dict[str, Any]):
     try:
         logger.info(f"ダウンロード開始: {job_id}, URL: {url}")
         
-        # YouTube判別
+        # 動画情報事前取得
         video_service = VideoService()
         is_youtube = video_service.is_youtube_url(url)
         
+        # 基本情報取得
+        ydl_opts = {
+            'quiet': True,
+            'no_warnings': True,
+            'extract_flat': False,
+            'skip_download': True
+        }
+        
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            video_info = ydl.extract_info(url, download=False)
+        
+        if not video_info:
+            raise Exception("動画情報を取得できませんでした")
+        
+        logger.info(f"動画情報取得完了: {video_info.get('title', 'Unknown')}")
         logger.info(f"サイト判別: {'YouTube' if is_youtube else 'その他のサイト'} - {url}")
         
         # タスク状態の更新
@@ -81,19 +98,112 @@ def download_video(self, job_id: str, url: str, options: Dict[str, Any]):
                 "stage": "initializing",
                 "progress": 0,
                 "site_type": "youtube" if is_youtube else "other",
+                "title": video_info.get('title', 'Unknown'),
                 "started_at": datetime.utcnow().isoformat()
             }
         )
         
         update_job_status(job_id, "running", {
             "progress": 0,
-            "site_type": "youtube" if is_youtube else "other"
+            "site_type": "youtube" if is_youtube else "other",
+            "title": video_info.get('title', 'Unknown')
         })
         
-        if is_youtube:
-            return _download_youtube_video(self, job_id, url, options, update_job_status)
+        # 出力ディレクトリ設定
+        output_dir = os.path.join(settings.STORAGE_PATH, job_id)
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # 進捗コールバック
+        def progress_callback(progress_data):
+            try:
+                self.update_state(
+                    state="PROGRESS",
+                    meta={
+                        "job_id": job_id,
+                        "stage": "downloading",
+                        "progress": progress_data.get('progress', 0),
+                        "method": progress_data.get('method', 'unknown'),
+                        "speed": progress_data.get('speed', '0'),
+                        "site_type": "youtube" if is_youtube else "other"
+                    }
+                )
+                
+                update_job_status(job_id, "running", {
+                    "progress": progress_data.get('progress', 0),
+                    "method": progress_data.get('method', 'unknown')
+                })
+                
+            except Exception as e:
+                logger.warning(f"進捗更新エラー: {e}")
+        
+        # *** 修正点: 非同期処理を同期処理に変換 ***
+        try:
+            # 新しいイベントループを作成して実行
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            download_result = loop.run_until_complete(
+                download_accelerator.enhanced_download(
+                    url=url,
+                    video_info=video_info,
+                    output_path=output_dir,
+                    options=options,
+                    progress_callback=progress_callback
+                )
+            )
+        except Exception as e:
+            logger.warning(f"Enhanced download failed, falling back: {e}")
+            download_result = {"status": "fallback_to_ytdlp"}
+        finally:
+            # イベントループをクリーンアップ
+            try:
+                loop.close()
+            except:
+                pass
+        
+        # フォールバック: 標準yt-dlpダウンロード
+        if download_result.get('status') == 'fallback_to_ytdlp':
+            if is_youtube:
+                download_result = _download_youtube_video(self, job_id, url, options, update_job_status)
+            else:
+                download_result = _download_other_site_video(self, job_id, url, options, update_job_status)
+        
+        # ダウンロード結果確認
+        if download_result.get('status') == 'success':
+            
+            # ファイル処理（日本語ファイル名対応）
+            downloaded_files = []
+            
+            if download_result.get('files'):
+                # aria2やセグメントダウンロードの場合
+                downloaded_files = download_result['files']
+            else:
+                # 標準ダウンロードの場合
+                downloaded_files = _process_downloaded_files(output_dir, job_id, video_info)
+            
+            if not downloaded_files:
+                raise Exception("ダウンロードファイルが見つかりませんでした")
+            
+            result = {
+                "filename": downloaded_files[0],
+                "files": downloaded_files,
+                "title": video_info.get('title', 'Unknown'),
+                "duration": video_info.get('duration'),
+                "filesize": os.path.getsize(os.path.join(settings.STORAGE_PATH, downloaded_files[0])),
+                "completed_at": datetime.utcnow().isoformat(),
+                "site_type": "youtube" if is_youtube else "other",
+                "download_method": download_result.get('method', 'unknown')
+            }
+            
+            self.update_state(state="SUCCESS", meta={"job_id": job_id, "result": result})
+            update_job_status(job_id, "success", {"result": result})
+            logger.info(f"ダウンロード完了: {job_id} (method: {download_result.get('method')})")
+            
+            return result
+        
         else:
-            return _download_other_site_video(self, job_id, url, options, update_job_status)
+            error_message = download_result.get('error', 'Unknown download error')
+            raise Exception(error_message)
         
     except Exception as e:
         # 標準例外のみ使用（Celeryシリアライゼーション対応）
@@ -118,6 +228,7 @@ def download_video(self, job_id: str, url: str, options: Dict[str, Any]):
         # 標準例外として再発生
         raise Exception(error_message)
 
+# 既存の関数（_download_youtube_video, _download_other_site_video, _process_downloaded_files）
 def _download_youtube_video(task, job_id: str, url: str, options: Dict[str, Any], update_job_status):
     """YouTube動画ダウンロード処理"""
     
@@ -171,6 +282,8 @@ def _download_youtube_video(task, job_id: str, url: str, options: Dict[str, Any]
             raise Exception("ダウンロードファイルが見つかりませんでした")
         
         result = {
+            "status": "success",
+            "method": "youtube_standard",
             "filename": downloaded_files[0],
             "files": downloaded_files,
             "title": info.get('title', 'Unknown'),
@@ -255,6 +368,8 @@ def _download_other_site_video(task, job_id: str, url: str, options: Dict[str, A
                 
                 # 成功時の結果
                 result = {
+                    "status": "success",
+                    "method": "other_standard",
                     "filename": downloaded_files[0],
                     "files": downloaded_files,
                     "title": info.get('title', 'Unknown'),

@@ -1,11 +1,11 @@
-"""
-高度な機能 API（aria2統合・監視強化）
-"""
-
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from typing import Dict, Any, List, Optional
+from datetime import datetime
 import logging
+import uuid
 
+# 必要なインポートを追加
+from ..core.config import settings
 from ..services.aria2_service import aria2_service
 from ..services.advanced_monitoring import advanced_monitoring
 from ..middleware.security import require_premium_key
@@ -67,7 +67,6 @@ async def enhanced_download(
         
         # 通常のダウンロードタスクを拡張オプション付きで実行
         from ..tasks.download_task import download_video
-        import uuid
         
         job_id = str(uuid.uuid4())
         task = download_video.apply_async(args=[job_id, url, options])
@@ -135,4 +134,115 @@ async def get_detailed_health():
         
     except Exception as e:
         logger.error(f"Detailed health error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# 追加: サービスの健全性をチェックする汎用エンドポイント
+@router.get("/service/status")
+async def get_service_status():
+    """サービス全体のステータス取得"""
+    try:
+        services_status = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "services": {}
+        }
+        
+        # aria2 サービス
+        if getattr(settings, 'ENABLE_ARIA2', False):
+            try:
+                aria2_running = await aria2_service.check_aria2_status()
+                services_status["services"]["aria2"] = {
+                    "enabled": True,
+                    "running": aria2_running,
+                    "status": "healthy" if aria2_running else "unhealthy"
+                }
+            except Exception as e:
+                services_status["services"]["aria2"] = {
+                    "enabled": True,
+                    "running": False,
+                    "status": "error",
+                    "error": str(e)
+                }
+        else:
+            services_status["services"]["aria2"] = {
+                "enabled": False,
+                "status": "disabled"
+            }
+        
+        # Redis サービス
+        try:
+            import redis
+            redis_client = redis.from_url(settings.REDIS_URL)
+            redis_client.ping()
+            services_status["services"]["redis"] = {
+                "status": "healthy"
+            }
+        except Exception as e:
+            services_status["services"]["redis"] = {
+                "status": "unhealthy",
+                "error": str(e)
+            }
+        
+        # Celery ワーカー
+        try:
+            from ..core.celery_app import celery_app
+            inspect = celery_app.control.inspect()
+            stats = inspect.stats() or {}
+            worker_count = len(stats)
+            
+            services_status["services"]["celery"] = {
+                "status": "healthy" if worker_count > 0 else "unhealthy",
+                "active_workers": worker_count,
+                "workers": list(stats.keys()) if stats else []
+            }
+        except Exception as e:
+            services_status["services"]["celery"] = {
+                "status": "error",
+                "error": str(e)
+            }
+        
+        # 全体ステータス判定
+        all_services = services_status["services"]
+        unhealthy_services = [
+            name for name, service in all_services.items() 
+            if service.get("status") in ["unhealthy", "error"] and service.get("enabled", True)
+        ]
+        
+        services_status["overall_status"] = "unhealthy" if unhealthy_services else "healthy"
+        services_status["unhealthy_services"] = unhealthy_services
+        
+        return services_status
+        
+    except Exception as e:
+        logger.error(f"Service status error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# 追加: 設定情報取得エンドポイント
+@router.get("/config/info", dependencies=[Depends(require_premium_key)])
+async def get_config_info():
+    """設定情報取得（管理者用）"""
+    try:
+        config_info = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "environment": getattr(settings, 'ENVIRONMENT', 'unknown'),
+            "features": {
+                "aria2_enabled": getattr(settings, 'ENABLE_ARIA2', False),
+                "rate_limiting_enabled": getattr(settings, 'ENABLE_RATE_LIMITING', False),
+                "monitoring_enabled": getattr(settings, 'ENABLE_PERFORMANCE_MONITORING', False)
+            },
+            "limits": {
+                "max_concurrent_jobs_premium": getattr(settings, 'MAX_CONCURRENT_JOBS_PREMIUM', 10),
+                "max_concurrent_jobs_normal": getattr(settings, 'MAX_CONCURRENT_JOBS_NORMAL', 3),
+                "aria2_threshold_mb": getattr(settings, 'ARIA2_THRESHOLD_MB', 50),
+                "cache_ttl": getattr(settings, 'CACHE_TTL', 3600)
+            },
+            "paths": {
+                "storage_path": getattr(settings, 'STORAGE_PATH', '/app/downloads'),
+                "log_file": getattr(settings, 'LOG_FILE', '/app/logs/app.log')
+            }
+        }
+        
+        return config_info
+        
+    except Exception as e:
+        logger.error(f"Config info error: {e}")
         raise HTTPException(status_code=500, detail=str(e))

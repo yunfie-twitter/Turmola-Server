@@ -1,7 +1,7 @@
 import redis.asyncio as redis
 import logging
 from typing import Optional
-
+import asyncio
 from .config import settings
 
 logger = logging.getLogger(__name__)
