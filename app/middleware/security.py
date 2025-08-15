@@ -6,6 +6,7 @@ from fastapi import Request, HTTPException, Security, Depends
 from fastapi.security.api_key import APIKeyHeader
 from starlette.middleware.base import BaseHTTPMiddleware
 import logging
+from typing import Optional
 
 from ..core.config import settings
 from ..utils.helpers import get_client_ip

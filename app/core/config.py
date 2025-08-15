@@ -52,6 +52,14 @@ class Settings(BaseSettings):
     MAX_FILE_AGE_DAYS: int = Field(default=7, ge=1, le=365, description="ファイル最大保持日数")
     MAX_STORAGE_GB: int = Field(default=100, ge=1, le=10000, description="最大ストレージ容量（GB）")
     
+    # 追加: フェイルオーバー設定
+    ENABLE_FAILOVER: bool = False
+    
+    # 追加: その他の高度な機能設定
+    ENABLE_ARIA2: bool = False
+    ENABLE_RATE_LIMITING: bool = False
+    ENABLE_PERFORMANCE_MONITORING: bool = False
+    
     # 環境設定
     ENVIRONMENT: str = Field(default="development", description="実行環境")
     
