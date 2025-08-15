@@ -76,11 +76,11 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  # Flower
+  # Flower（修正版）
   flower:
     build: .
     container_name: Turmola_flower
-    command: celery -A app.core.celery_app flower --port=5555 --broker=redis://redis:6379/0
+    command: celery -A app.core.celery_app --broker=redis://redis:6379/0 flower --port=5555
     ports:
       - "5555:5555"
     environment:

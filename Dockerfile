@@ -10,15 +10,15 @@ ENV PYTHONUNBUFFERED=1 \
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ffmpeg \
+    aria2 \
     && rm -rf /var/lib/apt/lists/*
 
 # 作業ディレクトリ設定
 WORKDIR /app
 
-# Python依存関係インストール（pycryptodomex追加）
+# Python依存関係インストール
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt \
-    && pip install --no-cache-dir pycryptodomex
+RUN pip install --no-cache-dir -r requirements.txt
 
 # アプリケーション一式コピー
 COPY . .
@@ -31,11 +31,11 @@ RUN mkdir -p /app/downloads /app/logs /app/celerybeat \
 # 実行権限付与
 RUN chmod +x /app/startup.sh || true
 
-# 非rootユーザーに切り替え（権限を確実に反映）
+# 非rootユーザーに切り替え
 USER appuser
 
 # ポート公開
-EXPOSE 8000
+EXPOSE 8000 6800
 
 # ヘルスチェック
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
